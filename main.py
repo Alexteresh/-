@@ -1,130 +1,85 @@
 import os
-import asyncio
 import logging
-from threading import Thread
-
-from flask import Flask
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.enums import ParseMode, ContentType
-from aiogram.client.default import DefaultBotProperties
+import asyncio
+from aiogram import Bot, Dispatcher, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.utils import executor
+from flask import Flask
+import threading
 
-# 📌 Настройки
-API_TOKEN = '7615496508:AAFn-YYA9gzAhXCN8zEEdiskTTXMagMJFto'
-ADMIN_ID   = 7784034570
+API_TOKEN = '7615496508:AAFn-YYA9gzAhXCN8zEEdiskTTXMaqMJFto'
+ADMIN_ID = 7784034570
 
-# Логи
-logging.basicConfig(level=logging.INFO)
+bot = Bot(token=API_TOKEN, parse_mode=types.ParseMode.HTML)
+dp = Dispatcher(bot)
 
-# Flask-сервер (Uptime pings)
+# Главная клавиатура
+main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+main_kb.add("Готовые клады", "Связаться с оператором")
+
+# Клавиатура с граммами
+gram_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+gram_kb.row("1 грамм", "2 грамма")
+gram_kb.row("3 грамма", "4 грамма")
+gram_kb.add("5 грамм")
+
+# Flask для пинга
 app = Flask(__name__)
 @app.route('/')
-def alive():
-    return "Bot is alive!"
+def home():
+    return 'Бот работает'
 
 def run_flask():
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host='0.0.0.0', port=8080)
 
-# Запускаем Flask в фоне
-Thread(target=run_flask, daemon=True).start()
+# Старт
+@dp.message_handler(commands=['start'])
+async def start_handler(message: types.Message):
+    await message.answer("Привет! Выберите действие:", reply_markup=main_kb)
 
-# Инициализация Aiogram
-bot = Bot(
-    token=API_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
-dp = Dispatcher(storage=MemoryStorage())
+# Граммовка
+@dp.message_handler(lambda msg: msg.text == "Готовые клады")
+async def show_grams(message: types.Message):
+    await message.answer("Выберите нужный объём:", reply_markup=gram_kb)
 
-# Хранилище выбора пользователя
-user_data: dict[int, dict[str, str]] = {}
-
-# Клавиатуры
-main_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [
-            KeyboardButton(text="🌿 Indica"),
-            KeyboardButton(text="🌱 Sativa"),
-            KeyboardButton(text="🔀 Hybrid")
-        ]
-    ],
-    resize_keyboard=True
-)
-amount_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="1 грамм"), KeyboardButton(text="2 грамма")],
-        [KeyboardButton(text="3 грамма"), KeyboardButton(text="4 грамма")],
-        [KeyboardButton(text="5 грамм")],
-        [KeyboardButton(text="⬅️ Назад")]
-    ],
-    resize_keyboard=True
-)
-
-# /start
-@dp.message(F.text == "/start")
-async def cmd_start(message: types.Message):
-    user_data.pop(message.from_user.id, None)
-    await message.answer("Привет, бро! Выбери сорт стаффа 🌿", reply_markup=main_menu)
-
-# Выбор сорта
-@dp.message(F.text.in_(["🌿 Indica", "🌱 Sativa", "🔀 Hybrid"]))
-async def choose_strain(message: types.Message):
-    user_data[message.from_user.id] = {"strain": message.text}
-    await message.answer(f"✅ Выбран сорт: {message.text}\nТеперь выбери объём 📋", reply_markup=amount_menu)
-
-# Назад
-@dp.message(F.text == "⬅️ Назад")
-async def go_back(message: types.Message):
-    user_data.pop(message.from_user.id, None)
-    await message.answer("Возвращаемся в главное меню 🌿", reply_markup=main_menu)
-
-# Выбор объёма
-@dp.message(F.text.in_(["1 грамм", "2 грамма", "3 грамма", "4 грамма", "5 грамм"]))
-async def choose_amount(message: types.Message):
-    uid = message.from_user.id
-    data = user_data.get(uid, {})
-    data["amount"] = message.text
-    user_data[uid] = data
-
+# Ответ на граммы
+@dp.message_handler(lambda msg: msg.text in [
+    "1 грамм", "2 грамма", "3 грамма", "4 грамма", "5 грамм"
+])
+async def send_price(message: types.Message):
     prices = {
-        "1 грамм": ("400 000 VND", "15.8 USDT"),
-        "2 грамма": ("800 000 VND", "31.6 USDT"),
-        "3 грамма": ("1 200 000 VND", "47.4 USDT"),
-        "4 грамма": ("1 600 000 VND", "63.2 USDT"),
-        "5 грамм": ("2 000 000 VND", "78.9 USDT"),
+        "1 грамм": "400.000 VND",
+        "2 грамма": "800.000 VND",
+        "3 грамма": "1.200.000 VND",
+        "4 грамма": "1.600.000 VND",
+        "5 грамм": "2.000.000 VND"
     }
-    price_vnd, price_usdt = prices[message.text]
-
     await message.answer(
-        f"✅ Ты выбрал: <b>{message.text}</b>\n"
-        f"💸 Стоимость: {price_vnd} (~{price_usdt})\n\n"
-        f"Переведи на кошелёк (TRC20):\n"
-        f"<code>TKjjYDJveXkr3Qmk37XraFUnDCoHuAX3zc</code>\n\n"
-        f"📸 После оплаты пришли сюда скрин чека"
+        f"<b>Цена:</b> {prices[message.text]}\n\n"
+        f"<b>USDT-кошелёк:</b>\n<code>TKjjYDJveXkr3Qmk37XraFUnDCoHuAX3zc</code>\n\n"
+        "После оплаты пришлите сюда скриншот перевода."
     )
 
-# Обработка скрина оплаты
-@dp.message(F.content_type == ContentType.PHOTO)
+# Оператор
+@dp.message_handler(lambda msg: msg.text == "Связаться с оператором")
+async def contact(message: types.Message):
+    await message.answer("Оператор скоро свяжется с вами. Ожидайте.")
+
+# Фото оплаты
+@dp.message_handler(content_types=types.ContentType.PHOTO)
 async def handle_photo(message: types.Message):
-    uid = message.from_user.id
-    data = user_data.get(uid, {})
-    strain = data.get("strain", "не указан")
-    amount = data.get("amount", "не указан")
-    username = message.from_user.username or str(uid)
-
+    photo = message.photo[-1]
     caption = (
-        f"📥 Оплата от @{username}\n"
-        f"🧪 Сорт: {strain}\n"
-        f"📦 Объём: {amount}"
+        f"💸 <b>Платёж от</b> @{message.from_user.username or 'без ника'}\n"
+        f"<b>ID:</b> <code>{message.from_user.id}</code>"
     )
-    await bot.send_photo(chat_id=ADMIN_ID, photo=message.photo[-1].file_id, caption=caption)
-    await message.answer("✅ Скрин принят. Оператор свяжется с тобой в ближайшее время.")
+    await bot.send_photo(chat_id=ADMIN_ID, photo=photo.file_id, caption=caption)
+    await message.answer("Скрин получен! Ожидайте подтверждения от оператора.")
 
-# Запуск бота
-async def main():
-    await dp.start_polling(bot)
+# Запуск
+def run_bot():
+    executor.start_polling(dp, skip_updates=True)
 
-if __name__ == "__main__":
-    # В Shell Replit: pip install aiogram==3.7.0 flask
-    asyncio.run(main())
+if __name__ == '__main__':
+    threading.Thread(target=run_flask).start()
+    run_bot()
